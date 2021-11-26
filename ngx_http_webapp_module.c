@@ -8,9 +8,11 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#include <mysql.h>
+
 
 typedef struct {
-    /* TODO: what do we need!!?? */
+    /* TODO: store database config here */
     ngx_uint_t enabled;
 } ngx_http_webapp_loc_conf_t;
 
@@ -96,7 +98,7 @@ ngx_http_webapp(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     clcf->handler = ngx_http_webapp_handler;
 
-    printf("THANK YOU!!\n");
+    printf("MySQL client version: %s\n", mysql_get_client_info());
 
     webapp_cf->enabled = 1;
 
@@ -104,14 +106,64 @@ ngx_http_webapp(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
 }
 
 
+/*
+ * THIS is the actual "handler". It's where we do work and then
+ * serve a response.
+ */
 static ngx_int_t
 ngx_http_webapp_handler(ngx_http_request_t *r) {
     ngx_http_webapp_loc_conf_t  *webapp_cf;
-    webapp_cf = ngx_http_get_module_loc_conf(r, ngx_http_webapp_module);
+    MYSQL *mysql, *attempt;
+    const char *error_message;
+    ngx_buf_t *b;
+    u_char *body_bytes;
+    ngx_chain_t out;
 
-    /* TODO: do real work here?? */
-    if (webapp_cf->enabled) {
-        return NGX_HTTP_FORBIDDEN;
+    webapp_cf = ngx_http_get_module_loc_conf(r, ngx_http_webapp_module);
+    if (webapp_cf->enabled) {} /* ignore this */
+
+    mysql = mysql_init(NULL);
+    attempt = mysql_real_connect(
+            mysql,
+            "172.17.0.2",
+            "root",
+            "abc123test1847test?",
+            "webapp",
+            3306,
+            NULL,
+            0);
+
+    if (attempt == NULL) {
+        /* This means we failed to connect to mysql! render the body as plaintext */
+        error_message = mysql_error(mysql);
+
+        /* GENERATE HEADERS */
+        r->headers_out.status = NGX_HTTP_INTERNAL_SERVER_ERROR;
+        r->headers_out.content_length_n = strlen(error_message);
+        r->headers_out.content_type.len = sizeof("text/plain") - 1;
+        r->headers_out.content_type.data = (u_char *)"text/plain";
+
+        /* GENERATE BODY */
+        b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t) + strlen(error_message));
+        if (b == NULL) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                    "Failed to allocate response buffer.");
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+        body_bytes = (u_char *)b + sizeof(ngx_buf_t);
+        ngx_memcpy(body_bytes, error_message, r->headers_out.content_length_n);
+
+        b->pos = body_bytes; /* first position in memory of the data */
+        b->last = body_bytes + r->headers_out.content_length_n; /* last position */
+
+        b->memory = 1; /* content is in read-only memory */
+        /* (i.e., filters should copy it rather than rewrite in place) */
+        b->last_buf = 1; /* there will be no more buffers in the request */
+
+        out.buf = b;
+        out.next = NULL;
+
+        return ngx_http_output_filter(r, &out);
     }
     else {
         return NGX_HTTP_NO_CONTENT;
@@ -129,10 +181,8 @@ ngx_http_webapp_create_loc_conf(ngx_conf_t *cf)
 {
     ngx_http_webapp_loc_conf_t  *conf;
 
-    printf("this is ok right?\n");
-
     /* ngx_pcalloc and ngx_palloc will be freed by nginx */
-    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_webapp_loc_conf_t));
+    conf = ngx_palloc(cf->pool, sizeof(ngx_http_webapp_loc_conf_t));
     if (conf == NULL) {
         return NGX_CONF_ERROR;
     }
