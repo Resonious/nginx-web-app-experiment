@@ -142,6 +142,7 @@ ngx_http_webapp_handler(ngx_http_request_t *r) {
         r->headers_out.content_length_n = strlen(error_message);
         r->headers_out.content_type.len = sizeof("text/plain") - 1;
         r->headers_out.content_type.data = (u_char *)"text/plain";
+        ngx_http_send_header(r);
 
         /* GENERATE BODY */
         b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t) + strlen(error_message));
